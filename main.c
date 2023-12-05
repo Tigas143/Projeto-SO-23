@@ -28,17 +28,27 @@ char *strremove(char *str, const char *sub) {
 
 
 int main(int argc, char *argv[]) {
+  const char *jobs_directory;
   unsigned int state_access_delay_ms = STATE_ACCESS_DELAY_MS;
-  if (argc > 1) {
-    char *endptr;
-    unsigned long int delay = strtoul(argv[1], &endptr, 10);
 
-    if (*endptr != '\0' || delay > UINT_MAX) {
+  if (argc >= 2) {
+    jobs_directory = argv[1];
+    
+    // Check if there's an optional delay argument
+  if (argc > 2) {
+    char *endptr;
+    unsigned long int delay = strtoul(argv[2], &endptr, 10);
+
+    if (*endptr == '\0' && delay <= UINT_MAX) {
+      state_access_delay_ms = (unsigned int)delay;
+    } else {
       fprintf(stderr, "Invalid delay value or value too large\n");
       return 1;
     }
-
-    state_access_delay_ms = (unsigned int)delay;
+  }
+  } else {
+    fprintf(stderr, "Usage: %s <jobs_directory> [delay]\n", argv[0]);
+    return 1;
   }
 
   if (ems_init(state_access_delay_ms)) {
@@ -46,15 +56,12 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-
-
-    const char *jobs_directory = argv[2];
-    DIR *dir = opendir(jobs_directory);
-    if (!dir) {
-        perror("Erro ao abrir o diretório JOBS");
-        return 1;
-    }
-    struct dirent *entry;
+  DIR *dir = opendir(jobs_directory);
+  if (!dir) {
+    perror("Error opening JOBS directory");
+    return 1;
+  }
+  struct dirent *entry;
 
   while ((entry = readdir(dir)) != NULL) {
     char file_path[4096];
