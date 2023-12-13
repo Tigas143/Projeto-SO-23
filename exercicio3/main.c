@@ -17,6 +17,10 @@
 struct ThreadArgs {
     int input_file;
     int fd;
+    pthread_mutex_t *show_list_mutex;
+    pthread_cond_t *show_list_cond;
+    int *reserve_in_progress;
+    int *exit_thread;
 };
 
 char *strremove(char *str, const char *sub) {
@@ -34,7 +38,10 @@ void *thread_function(void *args) {
     struct ThreadArgs *thread_args = (struct ThreadArgs *)args;
     int input_file = thread_args->input_file;
     int fd = thread_args->fd;
-
+    pthread_mutex_t *show_list_mutex = thread_args->show_list_mutex;
+    pthread_cond_t *show_list_cond = thread_args->show_list_cond;
+    int *reserve_in_progress = thread_args->reserve_in_progress;
+    int *exit_thread = thread_args->exit_thread;
     unsigned int event_id, delay;
     size_t num_rows, num_columns, num_coords;
     size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
@@ -50,12 +57,14 @@ void *thread_function(void *args) {
           if (ems_create(event_id, num_rows, num_columns)) {
             fprintf(stderr, "Failed to create event\n");
           }
-
           break;
 
         case CMD_RESERVE:
+          pthread_mutex_lock(show_list_mutex);
+          // Set RESERVE in progress
+          *reserve_in_progress = 1;
+          pthread_mutex_unlock(show_list_mutex);
           num_coords = parse_reserve(input_file, MAX_RESERVATION_SIZE, &event_id, xs, ys);
-
           if (num_coords == 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
             continue;
@@ -64,10 +73,17 @@ void *thread_function(void *args) {
           if (ems_reserve(event_id, num_coords, xs, ys)) {
             fprintf(stderr, "Failed to reserve seats\n");
           }
-
+          pthread_mutex_lock(show_list_mutex);
+          *reserve_in_progress = 0;
+          pthread_cond_signal(show_list_cond);
+          pthread_mutex_unlock(show_list_mutex);
           break;
 
         case CMD_SHOW:
+          pthread_mutex_lock(show_list_mutex);
+          while (*reserve_in_progress && !*exit_thread) {
+              pthread_cond_wait(show_list_cond, show_list_mutex);
+          }
           if (parse_show(input_file, &event_id) != 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
             continue;
@@ -76,17 +92,21 @@ void *thread_function(void *args) {
           if (ems_show(event_id, fd)) {
             fprintf(stderr, "Failed to show event\n");
           }
-
+          
+          *reserve_in_progress = 0;
+          pthread_cond_signal(show_list_cond);
+          pthread_mutex_unlock(show_list_mutex);
           break;
 
         case CMD_LIST_EVENTS:
+          pthread_mutex_lock(show_list_mutex);
           if (ems_list_events(fd)) {
             fprintf(stderr, "Failed to list events\n");
           }
-
+          pthread_mutex_unlock(show_list_mutex); 
           break;
         case CMD_WAIT:
-                    if (parse_wait(input_file, &delay, NULL) == -1) {  // thread_id is not implemented
+          if (parse_wait(input_file, &delay, NULL) == -1) {  // thread_id is not implemented
             fprintf(stderr, "Invalid command. See HELP for usage\n");
             continue;
           }
@@ -98,7 +118,7 @@ void *thread_function(void *args) {
           break;
 
         case CMD_INVALID:
-          fprintf(stderr, "SSSSInvalid command. See HELP for usage\n");
+          fprintf(stderr, "SSSSInvalid command. See HELP for usage: \n");
           break;
 
         case CMD_HELP:
@@ -120,6 +140,7 @@ void *thread_function(void *args) {
 
         case EOC:
           ems_terminate();
+          *exit_thread = 1;
           return NULL;
       }
     }
@@ -135,7 +156,6 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
         perror("Error opening command file");
         return;
     }
-
     int fd = 0;
     if (strstr(filename, ".jobs") != NULL) {
         char nome[4096];
@@ -152,14 +172,22 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
         return;
     }
 
+
+    pthread_mutex_t show_list_mutex = PTHREAD_MUTEX_INITIALIZER;
+    int reserve_in_progress = 0;
+    pthread_cond_t show_list_cond = PTHREAD_COND_INITIALIZER;
+    int exit_thread = 0;
     // Create an array to store thread IDs
     pthread_t threads[max_threads];
     struct ThreadArgs *thread_args_array = malloc((size_t)max_threads * sizeof(struct ThreadArgs));
 
    for (int i = 0; i < max_threads; ++i) {
-        thread_args_array[i].input_file = input_file;
-        thread_args_array[i].fd = fd;
-
+      thread_args_array[i].input_file = input_file;
+      thread_args_array[i].fd = fd;
+      thread_args_array[i].show_list_mutex = &show_list_mutex;
+      thread_args_array[i].show_list_cond = &show_list_cond;
+      thread_args_array[i].reserve_in_progress = &reserve_in_progress;
+      thread_args_array[i].exit_thread = &exit_thread;
         if (pthread_create(&threads[i], NULL, thread_function, (void *)&thread_args_array[i]) != 0) {
             perror("Error creating thread");
             break;
@@ -172,6 +200,8 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
 
     // Close the output file
     close(fd);
+    pthread_mutex_destroy(&show_list_mutex);
+    pthread_cond_destroy(&show_list_cond);
     free(thread_args_array);
 }
 
@@ -212,7 +242,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to initialize EMS\n");
         return 1;
     }
-
    DIR *dir = opendir(jobs_directory);
     if (!dir) {
         perror("Error opening JOBS directory");
@@ -221,34 +250,49 @@ int main(int argc, char *argv[]) {
 
     struct dirent *entry;
     int active_processes = 0;
-
+    int status;
     while ((entry = readdir(dir)) != NULL) {
-        if (active_processes >= max_processes) {
-            // Wait for any child process to finish
-            wait(NULL);
-            active_processes--;
-        }
+      if (active_processes >= max_processes) {
+          pid_t finished_pid = waitpid(-1, &status, 0);
+          if (finished_pid == -1) {
+              perror("Error waiting for child process");
+              return 1;
+          }
+          active_processes--;
+      }
 
-        pid_t pid = fork();
-        if (pid == -1) {
-            perror("Error forking process");
-            return 1;
-        } else if (pid == 0) {
-            // Child process
-            process_job_file(jobs_directory,entry->d_name, max_threads);
-            exit(0);
-        } else {
-            // Parent process
-            active_processes++;
-        }
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("Error forking process");
+        return 1;
+    } else if (pid == 0) {
+        // Child process
+        process_job_file(jobs_directory, entry->d_name, max_threads);
+        exit(0);
+    } else {
+        // Parent process
+        active_processes++;
     }
-
-    // Wait for all remaining child processes to finish
+    
+}
+// Wait for all remaining child processes to finish
     while (active_processes > 0) {
-        wait(NULL);
+         pid_t finished_pid = waitpid(-1, &status, 0);
+        if (finished_pid == -1) {
+            perror("Error waiting for child process");
+            return 1;
+        }
         active_processes--;
-    }
 
+        // Print termination state of the finished child process
+        if (WIFEXITED(status)) {
+            printf("Child process %d terminated with status %d\n", finished_pid, WEXITSTATUS(status));
+        } else {
+            printf("Child process %d terminated abnormally\n", finished_pid);
+        }
+        
+    }
+    
     closedir(dir);
     ems_terminate();
     return 0;

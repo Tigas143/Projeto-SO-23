@@ -38,12 +38,18 @@ void process_job_file(const char *jobs_directory, const char *filename) {
 
     int fd = 0;
     if (strstr(filename, ".jobs") != NULL) {
-        char nome[4096];
-        sprintf(nome, "%s.out", filename);
-        strremove(nome, ".jobs");
-        fd = open(nome, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+        // Construct the output file path based on the input file path
+         char output_path[8192];
+        snprintf(output_path, sizeof(output_path), "%s.out", file_path);
+
+        // Remove the ".jobs" extension from the output file path
+        strremove(output_path, ".jobs");
+
+        // Open the output file
+        fd = open(output_path, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             fprintf(stderr, "open error: %s\n", strerror(errno));
+            close(input_file);
             return;
         }
     } else {

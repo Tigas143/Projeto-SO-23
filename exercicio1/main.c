@@ -68,22 +68,25 @@ int main(int argc, char *argv[]) {
     snprintf(file_path, 4096, "%s/%s", jobs_directory, entry->d_name);
     int input_file = open(file_path, O_RDONLY);
     if (input_file == -1) {
-      perror("Error opening command file");
-      continue;  // Or you can exit the program, depending on requirements
+        perror("Error opening command file");
     }
+
     int fd = 0;
-    if(strstr(entry->d_name, ".jobs") != NULL){
-      char nome[4096];
-      sprintf(nome, "%s.out", entry->d_name);
-      strremove(nome, ".jobs");
-      fd = open(nome, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
-      if (fd < 0){
-        fprintf(stderr, "open error: %s\n", strerror(errno));
-        return -1;
-      }
-    }
-    else{
-      continue;
+    if (strstr(entry->d_name, ".jobs") != NULL) {
+        // Construct the output file path based on the input file path
+         char output_path[8192];
+        snprintf(output_path, sizeof(output_path), "%s.out", file_path);
+
+        // Remove the ".jobs" extension from the output file path
+        strremove(output_path, ".jobs");
+
+        // Open the output file
+        fd = open(output_path, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            fprintf(stderr, "open error: %s\n", strerror(errno));
+        }
+    } else {
+      
     }
     unsigned int event_id, delay;
     size_t num_rows, num_columns, num_coords;
