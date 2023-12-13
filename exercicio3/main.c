@@ -20,7 +20,10 @@ struct ThreadArgs {
     pthread_mutex_t *show_list_mutex;
     pthread_cond_t *show_list_cond;
     int *reserve_in_progress;
+    unsigned int thread_id;
     int *exit_thread;
+    unsigned int *delay;
+    unsigned int *wait_id;
 };
 
 char *strremove(char *str, const char *sub) {
@@ -38,6 +41,7 @@ void *thread_function(void *args) {
     struct ThreadArgs *thread_args = (struct ThreadArgs *)args;
     int input_file = thread_args->input_file;
     int fd = thread_args->fd;
+    unsigned int wait_id;
     pthread_mutex_t *show_list_mutex = thread_args->show_list_mutex;
     pthread_cond_t *show_list_cond = thread_args->show_list_cond;
     int *reserve_in_progress = thread_args->reserve_in_progress;
@@ -48,6 +52,10 @@ void *thread_function(void *args) {
     fflush(stdout);
     enum Command command_type;
     while ((command_type = get_next(input_file)) != EOC) {
+      if (*thread_args->delay > 0 && (*thread_args->wait_id == thread_args->thread_id)) {
+          printf("Thread %d waiting...\n", thread_args->thread_id);
+          ems_wait(delay);
+      }
       switch (command_type) {
         case CMD_CREATE:
           if (parse_create(input_file, &event_id, &num_rows, &num_columns) != 0) {
@@ -105,14 +113,17 @@ void *thread_function(void *args) {
           }
           pthread_mutex_unlock(show_list_mutex); 
           break;
-        case CMD_WAIT:
-          if (parse_wait(input_file, &delay, NULL) == -1) {  // thread_id is not implemented
-            fprintf(stderr, "Invalid command. See HELP for usage\n");
-            continue;
+        case CMD_WAIT: 
+          if (parse_wait(input_file, &delay, &wait_id) == -1) {
+              fprintf(stderr, "Invalid command. See HELP for usage\n");
+              continue;
           }
-
-          if (delay > 0) {
-            printf("Waiting...\n");
+          if (delay > 0 && wait_id != 0) {
+            printf("delaying\n");
+            *(thread_args->delay) = delay;
+            *(thread_args->wait_id) = wait_id;
+          }
+          else{
             ems_wait(delay);
           }
           break;
@@ -172,11 +183,15 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
         return;
     }
 
-
+  
     pthread_mutex_t show_list_mutex = PTHREAD_MUTEX_INITIALIZER;
     int reserve_in_progress = 0;
     pthread_cond_t show_list_cond = PTHREAD_COND_INITIALIZER;
     int exit_thread = 0;
+    unsigned int *delay_shared = malloc(sizeof(unsigned int));
+    unsigned int *wait_id_shared = malloc(sizeof(unsigned int));
+    *delay_shared = 0;
+    *wait_id_shared = 0;
     // Create an array to store thread IDs
     pthread_t threads[max_threads];
     struct ThreadArgs *thread_args_array = malloc((size_t)max_threads * sizeof(struct ThreadArgs));
@@ -188,6 +203,9 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
       thread_args_array[i].show_list_cond = &show_list_cond;
       thread_args_array[i].reserve_in_progress = &reserve_in_progress;
       thread_args_array[i].exit_thread = &exit_thread;
+      thread_args_array[i].thread_id =(unsigned int) (i + 1);
+      thread_args_array[i].delay = delay_shared;
+      thread_args_array[i].wait_id = wait_id_shared;
         if (pthread_create(&threads[i], NULL, thread_function, (void *)&thread_args_array[i]) != 0) {
             perror("Error creating thread");
             break;
@@ -202,6 +220,8 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
     close(fd);
     pthread_mutex_destroy(&show_list_mutex);
     pthread_cond_destroy(&show_list_cond);
+    free(delay_shared);
+    free(wait_id_shared);
     free(thread_args_array);
 }
 
