@@ -17,7 +17,9 @@
 struct ThreadArgs {
     int input_file;
     int fd;
-    //int thread_id penso que devemos por nos args a thread ID, e depois no thread_wait com o id 
+    int max_threads;  // Nova variável na estrutura
+    pthread_t *threads;
+    unsigned int thread_id; //penso que devemos por nos args a thread ID, e depois no thread_wait com o id 
 };
 
 char *strremove(char *str, const char *sub) {
@@ -35,24 +37,14 @@ void *thread_function(void *args) {
     struct ThreadArgs *thread_args = (struct ThreadArgs *)args;
     int input_file = thread_args->input_file;
     int fd = thread_args->fd;
-    //int thread_id = thread_args->thread_id;
-
+    unsigned int thread_id = thread_args->thread_id;
     unsigned int event_id, delay;
     size_t num_rows, num_columns, num_coords;
     size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
     fflush(stdout);
     enum Command command_type;
-    // Obtém o identificador da thread
-    //pthread_t self_id = pthread_self();
-    //int current_thread_id = -1;
-    /*
-    for (int i = 0; i < max_threads; ++i) {
-        if (pthread_equal(self_id, threads[i])) {
-            current_thread_id = i + 1;
-            break;
-        }
-    }
-    */
+
+    
     while ((command_type = get_next(input_file)) != EOC) {
       switch (command_type) {
         case CMD_CREATE:
@@ -99,11 +91,7 @@ void *thread_function(void *args) {
 
           break;
         case CMD_WAIT:
-                    if (parse_wait(input_file, &delay, NULL) == -1) {  // thread_id is not implemented
-            fprintf(stderr, "Invalid command. See HELP for usage\n");
-            continue;
-          }
-        /*
+                    
         if (parse_wait(input_file, &delay, &thread_id) == -1) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
             continue;
@@ -113,12 +101,6 @@ void *thread_function(void *args) {
             ems_wait(delay);
         }
         break;
-        */
-          if (delay > 0) {
-            printf("Waiting...\n");
-            ems_wait(delay);
-          }
-          break;
 
         case CMD_INVALID:
           fprintf(stderr, "SSSSInvalid command. See HELP for usage\n");
@@ -182,7 +164,9 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
    for (int i = 0; i < max_threads; ++i) {
         thread_args_array[i].input_file = input_file;
         thread_args_array[i].fd = fd;
-        // thread_args_array[i].thread_id = i + 1;
+        thread_args_array[i].max_threads = max_threads;
+        thread_args_array[i].threads = threads;
+        thread_args_array[i].thread_id =(unsigned int) (i + 1);
 
         if (pthread_create(&threads[i], NULL, thread_function, (void *)&thread_args_array[i]) != 0) {
             perror("Error creating thread");
