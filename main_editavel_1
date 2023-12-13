@@ -24,7 +24,7 @@ struct ThreadArgs {
     unsigned int thread_id;
     unsigned int *delay;
     unsigned int *wait_id;
-    int barrier_encountered;
+    int *barrier_encountered;
 };
 
 char *strremove(char *str, const char *sub) {
@@ -38,7 +38,7 @@ char *strremove(char *str, const char *sub) {
     return str;
 }
 
-int *thread_function(void *args) {
+void  *thread_function(void *args) {
     struct ThreadArgs *thread_args = (struct ThreadArgs *)args;
     int input_file = thread_args->input_file;
     int fd = thread_args->fd;
@@ -166,17 +166,19 @@ int *thread_function(void *args) {
           break;
 
         case CMD_BARRIER:// Not implemented
-          thread_args->barrier_encountered = 1;
-          return 1;  
+          *thread_args->barrier_encountered = 1;
+          return thread_args->barrier_encountered;  
         case CMD_EMPTY:
           break;
 
         case EOC:
           ems_terminate();
-          return 0;
+          *thread_args->barrier_encountered = 0;
+          return thread_args->barrier_encountered;
       }
     }
-    return 0;
+    *thread_args->barrier_encountered = 0;
+    return thread_args->barrier_encountered;
 }
 
 void process_job_file(const char *jobs_directory, const char *filename, int max_threads) {
@@ -236,7 +238,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
     // Wait for all threads to finish
     for (int i = 0; i < max_threads; ++i) {
         pthread_join(threads[i], NULL);
-        if (thread_args_array[i].barrier_encountered) { //parte da barrier
+        if (*thread_args_array[i].barrier_encountered) { //parte da barrier
             barrier_found = 1;
         }
     }
