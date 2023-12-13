@@ -96,7 +96,7 @@ void process_job_file(const char *jobs_directory, const char *filename) {
           break;
 
         case CMD_LIST_EVENTS:
-          if (ems_list_events()) {
+          if (ems_list_events(fd)) {
             fprintf(stderr, "Failed to list events\n");
           }
 

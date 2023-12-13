@@ -191,25 +191,31 @@ int ems_show(unsigned int event_id, int fd) {
   return 0;
 }
 
-int ems_list_events() {
-  if (event_list == NULL) {
-    fprintf(stderr, "EMS state must be initialized\n");
-    return 1;
-  }
+int ems_list_events(int fd) {
+    if (event_list == NULL) {
+        char msg[] = "EMS state must be initialized\n";
+        write(fd, msg, sizeof(msg) - 1);  // sizeof(msg) - 1 to exclude the null terminator
+        return 1;
+    }
 
-  if (event_list->head == NULL) {
-    printf("No events\n");
+    if (event_list->head == NULL) {
+        char msg[] = "No events\n";
+        write(fd, msg, sizeof(msg) - 1);  // sizeof(msg) - 1 to exclude the null terminator
+        return 0;
+    }
+
+    struct ListNode* current = event_list->head;
+    while (current != NULL) {
+        char buffer[20];  // Adjust the buffer size accordingly
+        int len = snprintf(buffer, sizeof(buffer), "Event: %u\n", (current->event)->id);
+
+        // Write the string to the file
+        write(fd, buffer, (size_t)len);
+
+        current = current->next;
+    }
+
     return 0;
-  }
-
-  struct ListNode* current = event_list->head;
-  while (current != NULL) {
-    printf("Event: ");
-    printf("%u\n", (current->event)->id);
-    current = current->next;
-  }
-
-  return 0;
 }
 
 void ems_wait(unsigned int delay_ms) {
