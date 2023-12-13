@@ -187,32 +187,46 @@ int main(int argc, char *argv[]) {
 
     struct dirent *entry;
     int active_processes = 0;
-
+    int status;
     while ((entry = readdir(dir)) != NULL) {
-        if (active_processes >= max_processes) {
-            // Wait for any child process to finish
-            wait(NULL);
-            active_processes--;
-        }
+      if (active_processes >= max_processes) {
+          pid_t finished_pid = waitpid(-1, &status, 0);
+          if (finished_pid == -1) {
+              perror("Error waiting for child process");
+              return 1;
+          }
+          active_processes--;
+      }
 
-        pid_t pid = fork();
-        if (pid == -1) {
-            perror("Error forking process");
-            return 1;
-        } else if (pid == 0) {
-            // Child process
-            process_job_file(jobs_directory, entry->d_name);
-            exit(0);
-        } else {
-            // Parent process
-            active_processes++;
-        }
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("Error forking process");
+        return 1;
+    } else if (pid == 0) {
+        // Child process
+        process_job_file(jobs_directory, entry->d_name);
+        exit(0);
+    } else {
+        // Parent process
+        active_processes++;
     }
+}
 
-    // Wait for all remaining child processes to finish
+// Wait for all remaining child processes to finish
     while (active_processes > 0) {
-        wait(NULL);
+         pid_t finished_pid = waitpid(-1, &status, 0);
+        if (finished_pid == -1) {
+            perror("Error waiting for child process");
+            return 1;
+        }
         active_processes--;
+
+        // Print termination state of the finished child process
+        if (WIFEXITED(status)) {
+            printf("Child process %d terminated with status %d\n", finished_pid, WEXITSTATUS(status));
+        } else {
+            printf("Child process %d terminated abnormally\n", finished_pid);
+        }
     }
 
     closedir(dir);
