@@ -24,6 +24,7 @@ struct ThreadArgs {
     unsigned int thread_id;
     unsigned int *delay;
     unsigned int *wait_id;
+    unsigned int *barrier_encountered;
 };
 
 char *strremove(char *str, const char *sub) {
@@ -52,6 +53,11 @@ void *thread_function(void *args) {
     fflush(stdout);
     enum Command command_type;
     while ((command_type = get_next(input_file)) != EOC) {
+      printf("Thread %d processing command\n", thread_args->thread_id);
+      if(*thread_args->barrier_encountered == 1){
+        printf("222Barrier encountered in Thread %d\n", thread_args->thread_id);
+        return NULL;
+      }
       if (*thread_args->delay > 0 && (*thread_args->wait_id == thread_args->thread_id)) {
         printf("Thread %d waiting...\n", thread_args->thread_id);
         ems_wait(delay);
@@ -104,7 +110,7 @@ void *thread_function(void *args) {
               pthread_cond_wait(show_list_cond, show_reserve_mutex);
           }
           pthread_mutex_unlock(show_reserve_mutex);
-          
+          printf("Thread %d processing show\n", thread_args->thread_id);
           if (parse_show(input_file, &event_id) != 0) {
             pthread_mutex_lock(show_reserve_mutex);
             *reserve_in_progress = 0;
@@ -164,7 +170,11 @@ void *thread_function(void *args) {
 
           break;
 
-        case CMD_BARRIER:  // Not implemented
+        case CMD_BARRIER:
+          printf("Barrier encountered in Thread %d\n", thread_args->thread_id);
+          *thread_args->barrier_encountered = 1;
+          return thread_args->barrier_encountered;
+          break;
         case CMD_EMPTY:
           break;
 
@@ -186,10 +196,10 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
     }
     int fd = 0;
     if (strstr(filename, ".jobs") != NULL) {
-        char nome[4096];
-        sprintf(nome, "%s.out", filename);
-        strremove(nome, ".jobs");
-        fd = open(nome, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
+         char output_path[8192];
+        snprintf(output_path, sizeof(output_path), "%s.out", file_path);
+        strremove(output_path, ".jobs");
+        fd = open(output_path, O_CREAT | O_TRUNC | O_WRONLY, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             fprintf(stderr, "open error: %s\n", strerror(errno));
             close(input_file);
@@ -208,6 +218,8 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
     pthread_cond_t show_list_cond = PTHREAD_COND_INITIALIZER;
     unsigned int *delay_shared = malloc(sizeof(unsigned int));
     unsigned int *wait_id_shared = malloc(sizeof(unsigned int));
+    unsigned int *barrier_encountered = malloc(sizeof(unsigned int));
+    *barrier_encountered = 0;
     *delay_shared = 0;
     *wait_id_shared = 0;
     // Create an array to store thread IDs
@@ -224,21 +236,40 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
       thread_args_array[i].thread_id =(unsigned int) (i + 1);
       thread_args_array[i].delay = delay_shared;
       thread_args_array[i].wait_id = wait_id_shared;
+      thread_args_array[i].barrier_encountered = barrier_encountered;
         if (pthread_create(&threads[i], NULL, thread_function, (void *)&thread_args_array[i]) != 0) {
             perror("Error creating thread");
             break;
         }
     }
+    
     // Wait for all threads to finish
     for (int i = 0; i < max_threads; ++i) {
         pthread_join(threads[i], NULL);
     }
+    unsigned int status = *barrier_encountered;
+    while (status == 1) {
+        // Inicia nova ronda de processamento paralelo
+        printf("Starting new round of parallel processing\n");
+        *barrier_encountered = 0;
+        for (int i = 0; i < max_threads; ++i) {
+            if (pthread_create(&threads[i], NULL, thread_function, (void *)&thread_args_array[i]) != 0) {
+                perror("Error creating thread");
+                break;
+            }
+        }
+        for (int i = 0; i < max_threads; ++i) {
+          pthread_join(threads[i], NULL);
+        }
+        status = *barrier_encountered;
+      }
 
     // Close the output file
     close(fd);
     pthread_mutex_destroy(&show_list_mutex);
     pthread_cond_destroy(&show_list_cond);
     pthread_mutex_destroy(&show_reserve_mutex);
+    free(barrier_encountered);
     free(delay_shared);
     free(wait_id_shared);
     free(reserve_in_progress);
