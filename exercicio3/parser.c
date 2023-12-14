@@ -51,7 +51,6 @@ enum Command get_next(int fd) {
     return EOC;
   }
   
-  printf("buf[0] = %c\n", buf[0]);
   switch (buf[0]) {
     case 'C':
       if (read(fd, buf + 1, 6) != 6 || strncmp(buf, "CREATE ", 7) != 0) {
