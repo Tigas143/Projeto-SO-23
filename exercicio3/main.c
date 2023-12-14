@@ -60,11 +60,9 @@ void *thread_function(void *args) {
     enum Command command_type;
     while (1) {
       if(*thread_args->barrier_encountered == 1){
-        printf("222Barrier encountered in Thread %d\n", thread_args->thread_id);
         return NULL;
       }
       if (*thread_args->delay > 0 && (*thread_args->wait_id == thread_args->thread_id)) {
-        printf("Thread %d waiting...\n", thread_args->thread_id);
         ems_wait(delay);
         *(thread_args->delay) = 0;
         wait_id = 0;
@@ -84,6 +82,7 @@ void *thread_function(void *args) {
           pthread_mutex_lock(fd_mutex);
           if (parse_create(input_file, &event_id, &num_rows, &num_columns) != 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
+            pthread_mutex_unlock(fd_mutex);
             continue;
           }
           pthread_mutex_unlock(fd_mutex);
