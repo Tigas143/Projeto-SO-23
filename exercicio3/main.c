@@ -20,6 +20,7 @@ struct ThreadArgs {
     pthread_mutex_t *show_list_mutex;
     pthread_mutex_t *show_reserve_mutex;
     pthread_cond_t *show_list_cond;
+    pthread_mutex_t *get_next_mutex;
     unsigned int *reserve_in_progress;
     unsigned int thread_id;
     unsigned int *delay;
@@ -46,13 +47,14 @@ void *thread_function(void *args) {
     pthread_mutex_t *show_list_mutex = thread_args->show_list_mutex;
     pthread_mutex_t *show_reserve_mutex = thread_args->show_reserve_mutex;
     pthread_cond_t *show_list_cond = thread_args->show_list_cond;
+    pthread_mutex_t *get_next_mutex = thread_args->get_next_mutex;
     unsigned int *reserve_in_progress = thread_args->reserve_in_progress;
     unsigned int event_id, delay;
     size_t num_rows, num_columns, num_coords;
     size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
     fflush(stdout);
     enum Command command_type;
-    while ((command_type = get_next(input_file)) != EOC) {
+    while (1) {
       printf("Thread %d processing command\n", thread_args->thread_id);
       if(*thread_args->barrier_encountered == 1){
         printf("222Barrier encountered in Thread %d\n", thread_args->thread_id);
@@ -67,6 +69,14 @@ void *thread_function(void *args) {
       else if(*thread_args->delay > 0 && *thread_args->wait_id == 0){
         ems_wait(delay);
         *(thread_args->delay) = 0;
+      }
+       // Lock the mutex before calling get_next
+      pthread_mutex_lock(get_next_mutex);
+      command_type = get_next(input_file);
+      // Unlock the mutex after get_next has returned
+      pthread_mutex_unlock(get_next_mutex);
+      if(command_type == EOC){
+        break;
       }
       switch (command_type) {
         case CMD_CREATE:
@@ -213,6 +223,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
   
     pthread_mutex_t show_list_mutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t show_reserve_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t get_next_mutex = PTHREAD_MUTEX_INITIALIZER;
     unsigned int *reserve_in_progress = malloc(sizeof(unsigned int));
     *reserve_in_progress = 0;
     pthread_cond_t show_list_cond = PTHREAD_COND_INITIALIZER;
@@ -231,6 +242,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
       thread_args_array[i].fd = fd;
       thread_args_array[i].show_list_mutex = &show_list_mutex;
       thread_args_array[i].show_reserve_mutex = &show_reserve_mutex;
+      thread_args_array[i].get_next_mutex = &get_next_mutex;
       thread_args_array[i].show_list_cond = &show_list_cond;
       thread_args_array[i].reserve_in_progress = reserve_in_progress;
       thread_args_array[i].thread_id =(unsigned int) (i + 1);
@@ -269,6 +281,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
     pthread_mutex_destroy(&show_list_mutex);
     pthread_cond_destroy(&show_list_cond);
     pthread_mutex_destroy(&show_reserve_mutex);
+    pthread_mutex_destroy(&get_next_mutex);
     free(barrier_encountered);
     free(delay_shared);
     free(wait_id_shared);
