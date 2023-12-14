@@ -9,6 +9,12 @@
 static struct EventList* event_list = NULL;
 static unsigned int state_access_delay_ms = 0;
 
+
+static void cleanup(int fd) {
+  char ch;
+  while (read(fd, &ch, 1) == 1 && ch != '\n')
+    ;
+}
 /// Calculates a timespec from a delay in milliseconds.
 /// @param delay_ms Delay in milliseconds.
 /// @return Timespec with the given delay.
@@ -186,7 +192,7 @@ int ems_show(unsigned int event_id, int fd) {
 
     write(fd, "\n", 1);
   }
-
+  cleanup(fd);
   return 0;
 }
 
@@ -194,12 +200,14 @@ int ems_list_events(int fd) {
     if (event_list == NULL) {
         char msg[] = "EMS state must be initialized\n";
         write(fd, msg, sizeof(msg) - 1);  // sizeof(msg) - 1 to exclude the null terminator
+        cleanup(fd);
         return 1;
     }
 
     if (event_list->head == NULL) {
         char msg[] = "No events\n";
         write(fd, msg, sizeof(msg) - 1);  // sizeof(msg) - 1 to exclude the null terminator
+        cleanup(fd);
         return 0;
     }
 
@@ -213,7 +221,7 @@ int ems_list_events(int fd) {
 
         current = current->next;
     }
-
+    cleanup(fd);
     return 0;
 }
 
@@ -222,3 +230,4 @@ void ems_wait(unsigned int delay_ms) {
   struct timespec delay = delay_to_timespec(delay_ms);
   nanosleep(&delay, NULL);
 }
+
