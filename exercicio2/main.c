@@ -122,7 +122,7 @@ void process_job_file(const char *jobs_directory, const char *filename) {
           break;
 
         case CMD_INVALID:
-          fprintf(stderr, "SSSSInvalid command. See HELP for usage\n");
+          fprintf(stderr, "Invalid command. See HELP for usage\n");
           break;
 
         case CMD_HELP:

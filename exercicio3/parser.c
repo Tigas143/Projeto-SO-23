@@ -50,7 +50,6 @@ enum Command get_next(int fd) {
   if (read(fd, buf, 1) != 1) {
     return EOC;
   }
-  
   switch (buf[0]) {
     case 'C':
       if (read(fd, buf + 1, 6) != 6 || strncmp(buf, "CREATE ", 7) != 0) {
@@ -238,31 +237,24 @@ int parse_wait(int fd, unsigned int *delay, unsigned int *thread_id) {
         cleanup(fd);
         return -1;
     }
-
-    if (ch == ' ' || ch == '\n' || ch == '\0') {
-        // If thread_id is not NULL, attempt to parse it
-        if (thread_id != NULL && ch == ' ') {
-            if (read_uint(fd, thread_id, &ch) != 0 || (ch != '\n' && ch != '\0')) {
-                cleanup(fd);
-                return -1;
-            }
-        } else if (thread_id != NULL) {
-            // thread_id is expected but not provided
-            cleanup(fd);
-            return -1;
-        } else {
-            // thread_id is not expected, consume newline character if present
-            if (ch == '\n' || ch == '\0') {
-                return 0;
-            } else {
-                cleanup(fd);
-                return -1;
-            }
-        }
-
-        return 1;  // Indicates thread_id was provided
-    } else {
-        cleanup(fd);
-        return -1;
+    if (ch == ' ') {
+        if (thread_id != 0) {
+      // Attempt to parse thread_id
+      if (read_uint(fd, thread_id, &ch) != 0 || (ch != '\n' && ch != '\0')) {
+          cleanup(fd);
+          return -1;
+      } else {
+          // thread_id is not expected, consume newline character if present
+          if (ch == '\n' || ch == '\0' || ch == EOF) {
+              cleanup(fd);
+              return 0;
+          } else {
+              cleanup(fd);
+              return -1;
+          }
+      }
     }
+  }
+
+  return 1;  // Indicates thread_id was provided
 }

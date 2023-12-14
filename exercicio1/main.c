@@ -153,7 +153,7 @@ int main(int argc, char *argv[]) {
         break;
 
       case CMD_INVALID:
-        fprintf(stderr, "SSSSInvalid command. See HELP for usage\n");
+        fprintf(stderr, "Invalid command. See HELP for usage\n");
         break;
 
       case CMD_HELP:

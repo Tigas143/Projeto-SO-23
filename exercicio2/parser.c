@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdio.h>
 
 #include "constants.h"
 
@@ -49,7 +50,6 @@ enum Command get_next(int fd) {
   if (read(fd, buf, 1) != 1) {
     return EOC;
   }
-
   switch (buf[0]) {
     case 'C':
       if (read(fd, buf + 1, 6) != 6 || strncmp(buf, "CREATE ", 7) != 0) {
@@ -231,29 +231,31 @@ int parse_show(int fd, unsigned int *event_id) {
 }
 
 int parse_wait(int fd, unsigned int *delay, unsigned int *thread_id) {
-  char ch;
+    char ch;
 
-  if (read_uint(fd, delay, &ch) != 0) {
-    cleanup(fd);
-    return -1;
+    if (read_uint(fd, delay, &ch) != 0) {
+        cleanup(fd);
+        return -1;
+    }
+    if (ch == ' ') {
+        if (thread_id != 0) {
+      // Attempt to parse thread_id
+      if (read_uint(fd, thread_id, &ch) != 0 || (ch != '\n' && ch != '\0')) {
+          cleanup(fd);
+          return -1;
+      } else {
+          // thread_id is not expected, consume newline character if present
+          if (ch == '\n' || ch == '\0' || ch == EOF) {
+              cleanup(fd);
+              return 0;
+          } else {
+              cleanup(fd);
+              return -1;
+          }
+      }
+    }
   }
 
-  if (ch == ' ') {
-    if (thread_id == NULL) {
-      cleanup(fd);
-      return 0;
-    }
-
-    if (read_uint(fd, thread_id, &ch) != 0 || (ch != '\n' && ch != '\0')) {
-      cleanup(fd);
-      return -1;
-    }
-
-    return 1;
-  } else if (ch == '\n' || ch == '\0') {
-    return 0;
-  } else {
-    cleanup(fd);
-    return -1;
-  }
+  return 1;  // Indicates thread_id was provided
 }
+
