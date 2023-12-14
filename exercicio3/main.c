@@ -20,13 +20,14 @@ struct ThreadArgs {
     pthread_mutex_t *show_list_mutex;
     pthread_mutex_t *show_reserve_mutex;
     pthread_cond_t *show_list_cond;
-    pthread_mutex_t *get_next_mutex;
+    pthread_mutex_t *fd_mutex;
     unsigned int *reserve_in_progress;
     unsigned int thread_id;
     unsigned int *delay;
     unsigned int *wait_id;
     unsigned int *barrier_encountered;
 };
+
 
 char *strremove(char *str, const char *sub) {
     size_t len = strlen(sub);
@@ -47,10 +48,11 @@ void *thread_function(void *args) {
     pthread_mutex_t *show_list_mutex = thread_args->show_list_mutex;
     pthread_mutex_t *show_reserve_mutex = thread_args->show_reserve_mutex;
     pthread_cond_t *show_list_cond = thread_args->show_list_cond;
-    pthread_mutex_t *get_next_mutex = thread_args->get_next_mutex;
+    pthread_mutex_t *fd_mutex = thread_args->fd_mutex;
     unsigned int *reserve_in_progress = thread_args->reserve_in_progress;
     unsigned int event_id, delay;
     size_t num_rows, num_columns, num_coords;
+    int show_result;
     size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
     fflush(stdout);
     enum Command command_type;
@@ -71,19 +73,21 @@ void *thread_function(void *args) {
         *(thread_args->delay) = 0;
       }
        // Lock the mutex before calling get_next
-      pthread_mutex_lock(get_next_mutex);
+      pthread_mutex_lock(fd_mutex);
       command_type = get_next(input_file);
       // Unlock the mutex after get_next has returned
-      pthread_mutex_unlock(get_next_mutex);
+      pthread_mutex_unlock(fd_mutex);
       if(command_type == EOC){
         break;
       }
       switch (command_type) {
         case CMD_CREATE:
+          pthread_mutex_lock(fd_mutex);
           if (parse_create(input_file, &event_id, &num_rows, &num_columns) != 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
             continue;
           }
+          pthread_mutex_unlock(fd_mutex);
           if (ems_create(event_id, num_rows, num_columns)) {
             fprintf(stderr, "Failed to create event\n");
           }
@@ -94,7 +98,9 @@ void *thread_function(void *args) {
           // Set RESERVE in progress
           *reserve_in_progress = 1;
           pthread_mutex_unlock(show_reserve_mutex);
+          pthread_mutex_lock(fd_mutex);
           num_coords = parse_reserve(input_file, MAX_RESERVATION_SIZE, &event_id, xs, ys);
+          pthread_mutex_unlock(fd_mutex);
           if (num_coords == 0) {
             fprintf(stderr, "Invalid command. See HELP for usage\n");
             pthread_mutex_lock(show_reserve_mutex);
@@ -121,7 +127,10 @@ void *thread_function(void *args) {
           }
           pthread_mutex_unlock(show_reserve_mutex);
           printf("Thread %d processing show\n", thread_args->thread_id);
-          if (parse_show(input_file, &event_id) != 0) {
+          pthread_mutex_lock(fd_mutex);
+          show_result = parse_show(input_file, &event_id);
+          pthread_mutex_unlock(fd_mutex);
+          if (show_result != 0) {
             pthread_mutex_lock(show_reserve_mutex);
             *reserve_in_progress = 0;
             pthread_cond_signal(show_list_cond);
@@ -143,23 +152,28 @@ void *thread_function(void *args) {
 
         case CMD_LIST_EVENTS:
           pthread_mutex_lock(show_list_mutex);
+          pthread_mutex_lock(fd_mutex);
           if (ems_list_events(fd)) {
             fprintf(stderr, "Failed to list events\n");
           }
+          pthread_mutex_unlock(fd_mutex);
           pthread_mutex_unlock(show_list_mutex); 
           break;
         case CMD_WAIT: 
+        pthread_mutex_lock(fd_mutex);
           if (parse_wait(input_file, &delay, &wait_id) == -1) {
               fprintf(stderr, "Invalid command. See HELP for usage\n");
+              pthread_mutex_unlock(fd_mutex);
               continue;
           }
+          pthread_mutex_unlock(fd_mutex);
           if (delay > 0 && wait_id != 0) {
             printf("delaying\n");
-            *(thread_args->delay) = delay;
+            *(thread_args->delay) += delay;
             *(thread_args->wait_id) = wait_id;
           }
           else{
-            *(thread_args->delay) = delay;
+            *(thread_args->delay) += delay;
           }
           break;
 
@@ -223,7 +237,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
   
     pthread_mutex_t show_list_mutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_t show_reserve_mutex = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_t get_next_mutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t fd_mutex = PTHREAD_MUTEX_INITIALIZER;
     unsigned int *reserve_in_progress = malloc(sizeof(unsigned int));
     *reserve_in_progress = 0;
     pthread_cond_t show_list_cond = PTHREAD_COND_INITIALIZER;
@@ -242,7 +256,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
       thread_args_array[i].fd = fd;
       thread_args_array[i].show_list_mutex = &show_list_mutex;
       thread_args_array[i].show_reserve_mutex = &show_reserve_mutex;
-      thread_args_array[i].get_next_mutex = &get_next_mutex;
+      thread_args_array[i].fd_mutex = &fd_mutex;
       thread_args_array[i].show_list_cond = &show_list_cond;
       thread_args_array[i].reserve_in_progress = reserve_in_progress;
       thread_args_array[i].thread_id =(unsigned int) (i + 1);
@@ -281,7 +295,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
     pthread_mutex_destroy(&show_list_mutex);
     pthread_cond_destroy(&show_list_cond);
     pthread_mutex_destroy(&show_reserve_mutex);
-    pthread_mutex_destroy(&get_next_mutex);
+    pthread_mutex_destroy(&fd_mutex);
     free(barrier_encountered);
     free(delay_shared);
     free(wait_id_shared);
