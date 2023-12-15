@@ -168,18 +168,21 @@ void *thread_function(void *args) {
               continue;
           }
           pthread_mutex_unlock(fd_mutex);
-          pthread_mutex_lock(delay_mutex);
           if (delay > 0 && *wait_id != 0) {
             printf("Waiting for thread...\n");
+            pthread_mutex_lock(delay_mutex);
             *(thread_args->delays + *wait_id - 1) += delay;
+            pthread_mutex_unlock(delay_mutex);
           }
           else{
             printf("Waiting...\n");
-             for (int i = 0; i < thread_args->max_threads; ++i) {
+            pthread_mutex_lock(delay_mutex);
+            for (int i = 0; i < thread_args->max_threads; ++i) {
               *(thread_args->delays + i) += delay;
             }
+            pthread_mutex_unlock(delay_mutex);
           }
-          pthread_mutex_unlock(delay_mutex);
+          
           delay = 0;
           
           break;

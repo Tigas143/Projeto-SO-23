@@ -240,7 +240,7 @@ int parse_wait(int fd, unsigned int *delay, unsigned int *thread_id) {
     if (ch == ' ') {
         if (thread_id != 0) {
       // Attempt to parse thread_id
-      if (read_uint(fd, thread_id, &ch) != 0 || (ch != '\n' && ch != '\0')) {
+      if (read_uint(fd, thread_id, &ch) != 0 || (ch != '\n' && ch != '\0' && ch != EOF)) {
           cleanup(fd);
           return -1;
       } else {
