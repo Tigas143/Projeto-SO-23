@@ -20,10 +20,12 @@ struct ThreadArgs {
     pthread_mutex_t *show_list_mutex;
     pthread_mutex_t *show_reserve_mutex;
     pthread_cond_t *show_reserve_cond;
+    pthread_mutex_t *delay_mutex;
     pthread_mutex_t *fd_mutex;
     unsigned int *reserve_in_progress;
     unsigned int thread_id;
-    unsigned int *delay;
+    int max_threads;   
+    unsigned int *delays;
     unsigned int *wait_id;
     unsigned int *barrier_encountered;
 };
@@ -43,6 +45,7 @@ void *thread_function(void *args) {
     int input_file = thread_args->input_file;
     int fd = thread_args->fd;
     unsigned int *wait_id = thread_args->wait_id;
+    pthread_mutex_t *delay_mutex = thread_args->delay_mutex;
     // avoid show and list at same time
     pthread_mutex_t *show_list_mutex = thread_args->show_list_mutex;
     // avoid reserve and show at same time
@@ -52,7 +55,7 @@ void *thread_function(void *args) {
     // avoid fd access at same time
     pthread_mutex_t *fd_mutex = thread_args->fd_mutex;
     unsigned int *reserve_in_progress = thread_args->reserve_in_progress;
-    unsigned int event_id, delay;
+    unsigned int event_id, delay, delay_temp;
     size_t num_rows, num_columns, num_coords;
     int show_result;
     size_t xs[MAX_RESERVATION_SIZE], ys[MAX_RESERVATION_SIZE];
@@ -62,14 +65,15 @@ void *thread_function(void *args) {
       if(*thread_args->barrier_encountered == 1){
         return NULL;
       }
-      if (*thread_args->delay > 0 && (*thread_args->wait_id == thread_args->thread_id)) {
-        ems_wait(delay);
-        *(thread_args->delay) = 0;
-        wait_id = 0;
-      }
-      else if(*thread_args->delay > 0 && *thread_args->wait_id == 0){
-        ems_wait(delay);
-        *(thread_args->delay) = 0;
+      pthread_mutex_lock(delay_mutex);
+      (delay_temp = *(thread_args->delays + thread_args->thread_id - 1));
+      pthread_mutex_unlock(delay_mutex);
+      if(delay_temp > 0){
+        printf("thread: %d. Waited for %d ms\n",thread_args->thread_id, delay_temp);
+        ems_wait(delay_temp);
+        pthread_mutex_lock(delay_mutex);
+        *(thread_args->delays + thread_args->thread_id - 1) -= delay_temp; 
+        pthread_mutex_unlock(delay_mutex);
       }
       pthread_mutex_lock(fd_mutex);
       command_type = get_next(input_file);
@@ -164,14 +168,20 @@ void *thread_function(void *args) {
               continue;
           }
           pthread_mutex_unlock(fd_mutex);
+          pthread_mutex_lock(delay_mutex);
           if (delay > 0 && *wait_id != 0) {
             printf("Waiting for thread...\n");
-            *(thread_args->delay) += delay;
+            *(thread_args->delays + *wait_id - 1) += delay;
           }
           else{
             printf("Waiting...\n");
-            *(thread_args->delay) += delay;
+             for (int i = 0; i < thread_args->max_threads; ++i) {
+              *(thread_args->delays + i) += delay;
+            }
           }
+          pthread_mutex_unlock(delay_mutex);
+          delay = 0;
+          
           break;
 
         case CMD_INVALID:
@@ -233,14 +243,17 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
   pthread_mutex_t show_list_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_mutex_t show_reserve_mutex = PTHREAD_MUTEX_INITIALIZER;
   pthread_mutex_t fd_mutex = PTHREAD_MUTEX_INITIALIZER;
+  pthread_mutex_t delay_mutex = PTHREAD_MUTEX_INITIALIZER;
   unsigned int *reserve_in_progress = malloc(sizeof(unsigned int));
   *reserve_in_progress = 0;
   pthread_cond_t show_reserve_cond = PTHREAD_COND_INITIALIZER;
-  unsigned int *delay_shared = malloc(sizeof(unsigned int));
+  unsigned int *delays_shared = malloc(sizeof(unsigned int) * (unsigned int)max_threads);
+  for (int i = 0; i < max_threads; ++i) {
+      *(delays_shared + i) = 0;
+  }
   unsigned int *wait_id_shared = malloc(sizeof(unsigned int));
   unsigned int *barrier_encountered = malloc(sizeof(unsigned int));
   *barrier_encountered = 0;
-  *delay_shared = 0;
   *wait_id_shared = 0;
   // Create an array to store thread IDs
   pthread_t threads[max_threads];
@@ -250,12 +263,14 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
       thread_args_array[i].input_file = input_file;
       thread_args_array[i].fd = fd;
       thread_args_array[i].show_list_mutex = &show_list_mutex;
+      thread_args_array[i].delay_mutex = &delay_mutex;
       thread_args_array[i].show_reserve_mutex = &show_reserve_mutex;
       thread_args_array[i].fd_mutex = &fd_mutex;
       thread_args_array[i].show_reserve_cond = &show_reserve_cond;
       thread_args_array[i].reserve_in_progress = reserve_in_progress;
       thread_args_array[i].thread_id =(unsigned int) (i + 1);
-      thread_args_array[i].delay = delay_shared;
+      thread_args_array[i].delays = delays_shared;
+      thread_args_array[i].max_threads = max_threads;
       thread_args_array[i].wait_id = wait_id_shared;
       thread_args_array[i].barrier_encountered = barrier_encountered;
         if (pthread_create(&threads[i], NULL, thread_function, (void *)&thread_args_array[i]) != 0) {
@@ -293,7 +308,7 @@ void process_job_file(const char *jobs_directory, const char *filename, int max_
   pthread_mutex_destroy(&show_reserve_mutex);
   pthread_mutex_destroy(&fd_mutex);
   free(barrier_encountered);
-  free(delay_shared);
+  free(delays_shared);
   free(wait_id_shared);
   free(reserve_in_progress);
   free(thread_args_array);
